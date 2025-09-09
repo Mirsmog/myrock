@@ -4,10 +4,11 @@
   "description": "Tiny ngrok-like CLI and Node.js library powered by cloudflared",
   "license": "MIT",
   "bin": {
-    "cfrok": "./dist/cli.js"
+    "cfrok": "./bin/cfrok"
   },
   "files": [
-    "dist/**/*"
+    "dist/**/*",
+    "bin/cfrok"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
