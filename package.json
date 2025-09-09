@@ -14,7 +14,8 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.json",
-    "dev": "tsc -w -p tsconfig.json"
+    "dev": "tsc -w -p tsconfig.json",
+    "postinstall": "chmod +x ./dist/cli.js || true"
   },
   "dependencies": {
     "mri": "^1.2.0",
