@@ -7,8 +7,8 @@
     "cfrok": "./bin/cfrok"
   },
   "files": [
-    "dist/**/*",
-    "bin/cfrok"
+    "dist/",
+    "bin/"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
