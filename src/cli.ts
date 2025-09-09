@@ -3,6 +3,7 @@ import mri from 'mri';
 import process from 'process';
 import path from 'path';
 import { startTunnel } from './index';
+import { Logger } from './logger';
 
 function printUsage(): void {
   console.log(`
@@ -18,25 +19,28 @@ Options:
   --configDir         Config directory (default: ~/.cloudflared)
   --bin               cloudflared binary (default: cloudflared)
   --dns-wait          Seconds to wait after DNS route (default: 2)
+  --static            Use static subdomain without random suffix
   --json              Print machine-readable JSON output
   --quiet             Suppress cloudflared logs (still runs)
 
 Examples:
-  cfrok http 3000 --prefix api
-  cfrok 5173 -p ui --domain dreamteamit.xyz
+  cfrok http 3000 --prefix api                    # api-1234.dreamteamit.xyz
+  cfrok 3000 api --static                         # api.dreamteamit.xyz
+  cfrok 5173 -p ui --domain dreamteamit.xyz       # ui-5678.dreamteamit.xyz
 `);
 }
 
 (async () => {
   const argv = mri(process.argv.slice(2), {
     string: ['prefix', 'domain', 'tunnel', 'cred', 'bin', 'configDir', 'dns-wait'],
-    boolean: ['json', 'quiet'],
+    boolean: ['json', 'quiet', 'static'],
     alias: { p: 'prefix', d: 'domain' },
     default: {
       domain: 'dreamteamit.xyz',
       tunnel: 'my-tunnel',
       json: false,
       quiet: false,
+      static: false,
       'dns-wait': '2'
     }
   });
@@ -79,6 +83,8 @@ Examples:
   }
 
   try {
+    const logger = new Logger({ quiet: argv.quiet, json: argv.json });
+    
     const started = await startTunnel({
       port,
       subdomainPrefix: String(prefix),
@@ -88,36 +94,46 @@ Examples:
       configDir: argv.configDir ? String(argv.configDir) : undefined,
       dnsWaitSeconds: Number(argv['dns-wait']),
       cloudflaredBin: argv.bin ? String(argv.bin) : 'cloudflared',
-      protocol
-    });
+      protocol,
+      staticSubdomain: argv.static
+    }, logger);
 
     if (argv.json) {
-      console.log(JSON.stringify({
+      logger.jsonOutput({
         url: started.url,
         subdomain: started.subdomain,
         configFile: started.configFile,
         pid: started.process.pid
-      }));
+      });
     } else {
-      console.log(`URL: ${started.url}`);
-      console.log(`Config: ${started.configFile}`);
-      console.log('Press Ctrl+C to stop...');
+      logger.url(started.url);
+      logger.config(started.configFile);
+      logger.ready();
     }
 
     if (!argv.quiet) {
-      started.process.stdout.on('data', (d: Buffer) => process.stdout.write(d));
-      started.process.stderr.on('data', (d: Buffer) => process.stderr.write(d));
+      started.process.stdout.on('data', (d: Buffer) => {
+        const lines = d.toString().split('\n').filter(line => line.trim());
+        lines.forEach(line => logger.cloudflaredLog(line));
+      });
+      started.process.stderr.on('data', (d: Buffer) => {
+        const lines = d.toString().split('\n').filter(line => line.trim());
+        lines.forEach(line => logger.cloudflaredLog(line));
+      });
     }
 
     const stop = async () => {
+      logger.info('Stopping tunnel...');
       await started.stop();
+      logger.success('Tunnel stopped');
       process.exit(0);
     };
 
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
   } catch (err: any) {
-    console.error(err?.message || String(err));
+    const logger = new Logger({ json: argv.json });
+    logger.error(err?.message || String(err));
     process.exit(1);
   }
 })();

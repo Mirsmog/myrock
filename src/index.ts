@@ -16,6 +16,7 @@ export interface StartTunnelOptions {
   dnsWaitSeconds?: number;
   cloudflaredBin?: string;
   protocol?: 'http' | 'tcp';
+  staticSubdomain?: boolean;
 }
 
 export interface StartedTunnel {
@@ -31,7 +32,7 @@ function getDefaultCredentialsFile(): string {
   return path.join(home, '.cloudflared', 'c656547d-1502-4922-995f-3bac3bc58b07.json');
 }
 
-export async function startTunnel(options: StartTunnelOptions): Promise<StartedTunnel> {
+export async function startTunnel(options: StartTunnelOptions, logger?: any): Promise<StartedTunnel> {
   const {
     port,
     subdomainPrefix,
@@ -42,7 +43,8 @@ export async function startTunnel(options: StartTunnelOptions): Promise<StartedT
     configDir = path.join(os.homedir(), '.cloudflared'),
     dnsWaitSeconds = 2,
     cloudflaredBin = 'cloudflared',
-    protocol = 'http'
+    protocol = 'http',
+    staticSubdomain = false
   } = options;
 
   if (!port || !Number.isFinite(port)) {
@@ -53,11 +55,14 @@ export async function startTunnel(options: StartTunnelOptions): Promise<StartedT
   }
 
   const safePrefix = sanitizeSubdomainPrefix(subdomainPrefix);
-  const suffix = generateRandomDigits(randomDigits);
-  const subdomain = `${safePrefix}-${suffix}.${domain}`;
+  const subdomain = staticSubdomain 
+    ? `${safePrefix}.${domain}`
+    : `${safePrefix}-${generateRandomDigits(randomDigits)}.${domain}`;
   const expandedCred = expandTilde(credentialsFile)!;
   const expandedConfigDir = expandTilde(configDir)!;
 
+  logger?.startSpinner('Creating configuration...');
+  
   await ensureDirectoryExists(expandedConfigDir);
 
   const configFile = path.join(expandedConfigDir, `config_${safePrefix}_${port}.yml`);
@@ -70,19 +75,29 @@ export async function startTunnel(options: StartTunnelOptions): Promise<StartedT
   });
   await fs.writeFile(configFile, configContent, { encoding: 'utf8' });
 
+  logger?.stopSpinner();
+  logger?.startSpinner('Setting up DNS route...');
+
   const routeResult = await spawnOnce(cloudflaredBin, ['tunnel', 'route', 'dns', tunnelId, subdomain]);
   if (routeResult.code !== 0) {
     const output = `${routeResult.stderr}\n${routeResult.stdout}`;
     if (!/already exists|already.*CNAME/i.test(output)) {
+      logger?.stopSpinner();
       const msg = `cloudflared route dns failed (code ${routeResult.code}): ${routeResult.stderr || routeResult.stdout}`;
       throw new Error(msg);
     }
   }
 
+  logger?.stopSpinner();
+  
   if (dnsWaitSeconds > 0) {
+    logger?.startSpinner('Waiting for DNS propagation...');
     await sleep(dnsWaitSeconds * 1000);
+    logger?.stopSpinner();
   }
 
+  logger?.startSpinner('Starting cloudflared tunnel...');
+  
   const runArgs = ['tunnel', '--config', configFile, 'run', tunnelId];
   const child = spawn(cloudflaredBin, runArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -107,6 +122,8 @@ export async function startTunnel(options: StartTunnelOptions): Promise<StartedT
   });
 
   await ready;
+  
+  logger?.stopSpinner();
 
   const url = `https://${subdomain}`;
 
